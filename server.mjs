@@ -195,7 +195,6 @@ app.get("*", (_req, res) => {
 // --------------------------------------------------
 // Start server
 // --------------------------------------------------
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`➡ LiteLLM: ${LITELLM_BASE_URL}`);
-});
+app.get("/*", (_req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
