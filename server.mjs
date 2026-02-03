@@ -183,12 +183,24 @@ ${output}
 });
 
 // --------------------------------------------------
-// Serve Vite build (dist)
+// Serve Vite build (dist) — SAFE on Render (no "*")
 // --------------------------------------------------
 const distPath = path.join(__dirname, "dist");
 app.use(express.static(distPath));
 
-app.get("*", (_req, res) => {
+// If someone hits /api/... and it's not defined, return JSON (avoids SPA fallback confusion)
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "API route not found" });
+});
+
+// SPA fallback WITHOUT using "*" or "/*"
+app.use((req, res, next) => {
+  // only handle GET requests for pages
+  if (req.method !== "GET") return next();
+
+  // ignore requests that look like real files (assets)
+  if (req.path.includes(".") || req.path.startsWith("/assets/")) return next();
+
   res.sendFile(path.join(distPath, "index.html"));
 });
 
