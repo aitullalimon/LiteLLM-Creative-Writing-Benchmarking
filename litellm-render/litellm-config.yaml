@@ -1,0 +1,10 @@
+general_settings:
+  master_key: ${LITELLM_MASTER_KEY}
+  disable_database: true
+  telemetry: false
+
+model_list:
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: ${OPENROUTER_API_KEY}

@@ -1,0 +1,7 @@
+litellm==1.41.8
+fastapi
+uvicorn
+httpx
+backoff
+pydantic
+python-dotenv
