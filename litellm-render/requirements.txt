@@ -5,3 +5,4 @@ httpx
 backoff
 pydantic
 python-dotenv
+litellm[proxy]
