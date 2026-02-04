@@ -1,3 +1,5 @@
+// server.mjs (FULL UPDATED CODE)
+
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -49,15 +51,51 @@ app.post("/api/benchmark", async (req, res) => {
   try {
     const prompt = String(req.body?.prompt || "").trim();
     const models = Array.isArray(req.body?.models) ? req.body.models : [];
-    const judgeModel = String(req.body?.judgeModel || "").trim();
+    const judgeModelUI = String(req.body?.judgeModel || "").trim();
 
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
     if (!models.length) return res.status(400).json({ error: "models[] is required" });
-    if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
+    if (!judgeModelUI) return res.status(400).json({ error: "judgeModel is required" });
+
+    // ✅ FIX: Map UI names -> LiteLLM provider/model IDs
+    const MODEL_MAP = {
+      // Writers
+      "GPT-4o Mini": "openai/gpt-4o-mini",
+      "GLM 4.7 Flash": "zhipu/glm-4.7",
+      "Kimi K2.5": "moonshot/kimi-k2",
+
+      // Judge (if UI uses same name)
+      "GPT-4o Mini (Recommended)": "openai/gpt-4o-mini",
+      "GPT-4o Mini (Recommended) ": "openai/gpt-4o-mini", // safety for trailing space
+      "GPT-4o Mini — Recommended": "openai/gpt-4o-mini",
+    };
+
+    const judgeModel = MODEL_MAP[judgeModelUI] || judgeModelUI; // allow already-correct values
 
     const results = [];
 
-    for (const model of models) {
+    for (const uiModel of models) {
+      const model = MODEL_MAP[uiModel] || uiModel; // allow already-correct values
+
+      if (!model.includes("/")) {
+        console.error("❌ Unknown model from UI:", uiModel);
+        results.push({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          modelName: uiModel,
+          provider: "unknown",
+          themeCoherence: 0,
+          creativity: 0,
+          fluency: 0,
+          engagement: 0,
+          totalScore: 0,
+          latency: 0,
+          error: `Unknown model: ${uiModel}`,
+        });
+        continue;
+      }
+
+      const started = Date.now();
+
       const writerResp = await callLiteLLM({
         model,
         temperature: 0.8,
@@ -118,7 +156,7 @@ ${output}
         fluency,
         engagement,
         totalScore,
-        latency: 0,
+        latency: Date.now() - started,
       });
     }
 
