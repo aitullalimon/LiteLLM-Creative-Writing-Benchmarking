@@ -132,5 +132,5 @@ Model availability depends on OpenRouter account permissions
 
 ## Author
 Creative Writing Benchmark
-Developed by Aitulla Labib Limon
+Developed by **Aitulla Labib Limon**
 Research & AI Engineering
