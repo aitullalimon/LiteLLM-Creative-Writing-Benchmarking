@@ -14,28 +14,30 @@ A research-grade web application for benchmarking large language models (LLMs) o
 ### Creative Writing Benchmark allows users to:
 . Compare multiple LLMs on the same creative prompt
 . Automatically evaluate outputs using a judge model
+
 ### Score models on:
         . Theme Coherence
         . Creativity
         . Fluency
         . Engagement
-    . Visualize results through charts and leaderboards
-    . Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
+
+. Visualize results through charts and leaderboards
+. Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
 
 ### This project is suitable for:
-. Research demos
-. Model comparison studies
-. Product evaluation
-. Client presentations
+    . Research demos
+    . Model comparison studies
+    . Product evaluation
+    . Client presentations
 
 
 ### Key Features
-. Multi-model benchmarking (OpenAI, OpenRouter, Anthropic, Moonshot, etc.)
-. LLM-as-a-Judge evaluation pipeline
-. Multi-metric scoring (0–40 total score)
-. Visual analytics (charts & leaderboard)
-. Demo / Preview mode (no API billing required)
-. Deployed on Render (production-ready)
+    . Multi-model benchmarking (OpenAI, OpenRouter, Anthropic, Moonshot, etc.)
+    . LLM-as-a-Judge evaluation pipeline
+    . Multi-metric scoring (0–40 total score)
+    . Visual analytics (charts & leaderboard)
+    . Demo / Preview mode (no API billing required)
+    . Deployed on Render (production-ready)
 
 ### Screenshots
 Add screenshots to the /screenshots folder and reference them below.
