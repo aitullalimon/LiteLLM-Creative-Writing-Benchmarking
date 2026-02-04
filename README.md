@@ -49,15 +49,15 @@ Leaderboard
 
 ## Architecture
 
-Frontend (React + Vite)
-        |
-        | POST /api/benchmark
-        ↓
-Node.js Server (Express)
-        |
-        | OpenAI-compatible API
-        ↓
-LiteLLM / OpenRouter
+    Frontend (React + Vite)
+            |
+            | POST /api/benchmark
+            ↓
+    Node.js Server (Express)
+            |
+            | OpenAI-compatible API
+            ↓
+    LiteLLM / OpenRouter
 
 ## Environment Variables
 
