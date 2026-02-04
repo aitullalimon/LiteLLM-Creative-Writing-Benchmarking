@@ -60,17 +60,13 @@ Node.js Server (Express)
 LiteLLM / OpenRouter
 
 ### Environment Variables
-Configure the following in Render → Environment or a local .env file.
 
-Required (Live Mode)
-
-LITELLM_BASE_URL=https://openrouter.ai/api/v1
-
-LITELLM_API_KEY=sk-or-xxxxxxxxxxxxxxxx
-
-Optional (Demo Mode)
-
-MOCK_MODE=true
+    Configure the following in Render → Environment or a local .env file.
+    Required (Live Mode)
+    LITELLM_BASE_URL=https://openrouter.ai/api/v1
+    LITELLM_API_KEY=sk-or-xxxxxxxxxxxxxxxx
+    Optional (Demo Mode)
+    MOCK_MODE=true
 
 When MOCK_MODE=true, the app renders charts and scores without calling external APIs — perfect for demos when credits are unavailable.
 
