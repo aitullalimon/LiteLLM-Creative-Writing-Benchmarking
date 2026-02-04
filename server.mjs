@@ -12,6 +12,7 @@ console.log("✅ Booting server.mjs...");
 console.log("PORT =", process.env.PORT);
 console.log("LITELLM_BASE_URL =", process.env.LITELLM_BASE_URL ? "SET" : "MISSING");
 console.log("LITELLM_API_KEY =", process.env.LITELLM_API_KEY ? "SET" : "MISSING");
+console.log("LITELLM_MASTER_KEY =", process.env.LITELLM_MASTER_KEY ? "SET" : "MISSING");
 
 function needEnv(name) {
   const v = process.env[name];
@@ -23,7 +24,9 @@ function needEnv(name) {
 }
 
 const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
-const LITELLM_API_KEY = (process.env.LITELLM_API_KEY || "").trim();
+
+// Accept either name (you can set only one in Render)
+const LITELLM_KEY = (process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || "").trim();
 
 // Normalize base so we can call /v1/* reliably
 const BASE_V1 = RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
@@ -57,7 +60,9 @@ async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
 async function callLiteLLMChatCompletions(payload) {
   const url = `${BASE_V1}/chat/completions`;
   const headers = { "Content-Type": "application/json" };
-  if (LITELLM_API_KEY) headers.Authorization = `Bearer ${LITELLM_API_KEY}`;
+
+  // LiteLLM Proxy expects Authorization: Bearer <master_key>
+  if (LITELLM_KEY) headers.Authorization = `Bearer ${LITELLM_KEY}`;
 
   const out = await fetchJson(url, {
     method: "POST",
@@ -72,7 +77,10 @@ async function callLiteLLMChatCompletions(payload) {
       out.json?.detail ||
       out.raw ||
       `LiteLLM HTTP ${out.status}`;
-    throw new Error(String(msg));
+
+    throw new Error(
+      `LiteLLM call failed (status ${out.status}). ${String(msg)} | base=${RAW_BASE}`
+    );
   }
 
   return out.json;
@@ -84,15 +92,16 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 // Debug LiteLLM connectivity
 app.get("/api/debug/litellm", async (_req, res) => {
   try {
-    const healthUrl = RAW_BASE.endsWith("/health") ? RAW_BASE : `${RAW_BASE}/health`;
+    const healthUrl = `${RAW_BASE}/health`;
     const h = await fetchJson(healthUrl);
     const models = await fetchJson(`${BASE_V1}/models`, {
-      headers: LITELLM_API_KEY ? { Authorization: `Bearer ${LITELLM_API_KEY}` } : {},
+      headers: LITELLM_KEY ? { Authorization: `Bearer ${LITELLM_KEY}` } : {},
     });
 
     res.json({
       base: RAW_BASE,
       baseV1: BASE_V1,
+      hasKey: Boolean(LITELLM_KEY),
       health: { ok: h.ok, status: h.status, json: h.json },
       models: { ok: models.ok, status: models.status, json: models.json },
     });
