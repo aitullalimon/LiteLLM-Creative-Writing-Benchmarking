@@ -15,12 +15,12 @@ A research-grade web application for benchmarking large language models (LLMs) o
 . Compare multiple LLMs on the same creative prompt
 . Automatically evaluate outputs using a judge model
 ### Score models on:
-    . Theme Coherence
-    . Creativity
-    . Fluency
-    . Engagement
-. Visualize results through charts and leaderboards
-. Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
+        . Theme Coherence
+        . Creativity
+        . Fluency
+        . Engagement
+    . Visualize results through charts and leaderboards
+    . Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
 
 ### This project is suitable for:
 . Research demos
