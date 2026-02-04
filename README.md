@@ -41,7 +41,7 @@ Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
     . Demo / Preview mode (no API billing required)
     . Deployed on Render (production-ready)
 
-### Screenshots
+## Screenshots
 Add screenshots to the /screenshots folder and reference them below.
 Benchmark Configuration
 Results & Charts
