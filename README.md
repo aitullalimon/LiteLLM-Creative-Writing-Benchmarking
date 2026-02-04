@@ -1,101 +1,119 @@
-# Welcome to your Lovable project
+# Welcome to Creative Writing Benchmark
 
 ## Project info
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
-## How can I edit this code?
+## 📘 Creative Writing Benchmark
 
-There are several ways of editing your application.
+LLM Evaluation Platform for Creative Writing Quality
+A research-grade web application for benchmarking large language models (LLMs) on creative writing tasks, using multi-metric evaluation and LLM-as-a-judge scoring.
 
-**Use Lovable**
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## 🔍 Overview
+### Creative Writing Benchmark allows users to:
+. Compare multiple LLMs on the same creative prompt
+. Automatically evaluate outputs using a judge model
+### . Score models on:
+    . Theme Coherence
+    . Creativity
+    . Fluency
+    . Engagement
+. Visualize results through charts and leaderboards
+. Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
 
-Changes made via Lovable will be committed automatically to this repo.
+### This project is suitable for:
+. Research demos
+. Model comparison studies
+. Product evaluation
+. Client presentations
 
-**Use your preferred IDE**
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+## Key Features
+. Multi-model benchmarking (OpenAI, OpenRouter, Anthropic, Moonshot, etc.)
+. LLM-as-a-Judge evaluation pipeline
+. Multi-metric scoring (0–40 total score)
+. Visual analytics (charts & leaderboard)
+. Demo / Preview mode (no API billing required)
+. Deployed on Render (production-ready)
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-### Deploy on Vercel (recommended)
-
-This repo includes a Vercel Serverless Function (`/api/benchmark`) that calls your LiteLLM proxy.
-
-**1) Set env vars in Vercel**
-
-- `LITELLM_BASE_URL` = your public LiteLLM proxy base URL (example: `https://YOUR_LITELLM_DOMAIN`)
-- `LITELLM_API_KEY` = optional (only if your LiteLLM proxy requires a key)
-
-**2) Deploy**
-
-Connect the GitHub repo to Vercel (or run `vercel --prod`).
-
-**3) Verify**
-
-Open the app and click **Run Benchmark**. The app calls:
-
-- Frontend → `POST /api/benchmark`
-- Vercel Function → `LITELLM_BASE_URL/v1/chat/completions`
-
-### LiteLLM proxy
-
-LiteLLM must run separately (VPS, Railway, EC2, etc.). An example `litellm-config.yaml` is included.
-
-You will typically set the provider key (e.g., `OPENROUTER_API_KEY`) on the LiteLLM host, not in Vercel.
-
-### Deploy via Lovable
-
-You can still publish from Lovable, but Vercel is recommended when you need a real `/api/*` backend.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+### Screenshots
+Add screenshots to the /screenshots folder and reference them below.
+Benchmark Configuration
+Results & Charts
+Leaderboard
+⚙️ Architecture
+Frontend (React + Vite)
+        |
+        | POST /api/benchmark
+        ↓
+Node.js Server (Express)
+        |
+        | OpenAI-compatible API
+        ↓
+LiteLLM / OpenRouter
+🔑 Environment Variables
+Configure the following in Render → Environment or a local .env file.
+Required (Live Mode)
+LITELLM_BASE_URL=https://openrouter.ai/api/v1
+LITELLM_API_KEY=sk-or-xxxxxxxxxxxxxxxx
+Optional (Demo Mode)
+MOCK_MODE=true
+When MOCK_MODE=true, the app renders charts and scores without calling external APIs — perfect for demos when credits are unavailable.
+🚀 Running Locally
+npm install
+npm run build
+npm start
+App will run on:
+http://localhost:10000
+🌍 Production Deployment
+Hosted on Render
+Auto-deploys on main branch push
+Uses Node.js + static Vite build
+To redeploy:
+git push origin main
+🧪 Demo vs Live Mode
+Mode	Description
+Demo Mode	Visual demo with mock scores (no billing)
+Live Mode	Real API calls using OpenRouter / LiteLLM
+Switch modes via environment variables — no code changes required.
+📊 Evaluation Metrics
+Each model output is scored on:
+Metric	Range
+Theme Coherence	0–10
+Creativity	0–10
+Fluency	0–10
+Engagement	0–10
+Total Score	0–40
+🧾 API Endpoint
+POST /api/benchmark
+Request
+{
+  "prompt": "Write a short story about a lighthouse keeper...",
+  "models": ["openai/gpt-4o-mini"],
+  "judgeModel": "openai/gpt-4o-mini"
+}
+Response
+{
+  "results": [
+    {
+      "modelName": "gpt-4o-mini",
+      "provider": "openai",
+      "themeCoherence": 8,
+      "creativity": 7,
+      "fluency": 9,
+      "engagement": 8,
+      "totalScore": 32
+    }
+  ]
+}
+📌 Notes for Client
+If results do not appear:
+Check API credits
+Verify LITELLM_API_KEY
+Use Demo Mode for preview
+Model availability depends on OpenRouter account permissions
+👤 Author
+Creative Writing Benchmark
+Developed by Labib
+Research & AI Engineering
