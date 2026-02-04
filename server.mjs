@@ -6,13 +6,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 
-console.log("✅ Booting server.mjs...");
-console.log("PORT =", process.env.PORT);
-console.log("LITELLM_BASE_URL =", process.env.LITELLM_BASE_URL ? "SET" : "MISSING");
-console.log("LITELLM_API_KEY =", process.env.LITELLM_API_KEY ? "SET" : "MISSING");
-console.log("LITELLM_MASTER_KEY =", process.env.LITELLM_MASTER_KEY ? "SET" : "MISSING");
+// ======================
+// Config
+// ======================
+const MOCK_MODE = String(process.env.MOCK_MODE || "").toLowerCase() === "true";
 
 function needEnv(name) {
   const v = process.env[name];
@@ -23,13 +22,47 @@ function needEnv(name) {
   return v;
 }
 
-const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
+// In MOCK_MODE we don't require provider envs
+const RAW_BASE = MOCK_MODE
+  ? ""
+  : needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
+const API_KEY = MOCK_MODE ? "" : (process.env.LITELLM_API_KEY || "").trim();
 
-// Accept either name (you can set only one in Render)
-const LITELLM_KEY = (process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY || "").trim();
+// Normalize base to include /v1
+const BASE_V1 =
+  MOCK_MODE ? "" : RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
 
-// Normalize base so we can call /v1/* reliably
-const BASE_V1 = RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
+console.log("✅ Booting server.mjs...");
+console.log("PORT =", process.env.PORT || "10000");
+console.log("MOCK_MODE =", MOCK_MODE);
+console.log("LITELLM_BASE_URL =", RAW_BASE ? "SET" : "MISSING/NOT_USED");
+console.log("LITELLM_API_KEY =", API_KEY ? "SET" : "MISSING/NOT_USED");
+
+// ======================
+// Helpers
+// ======================
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function mockCreativeText(prompt, model) {
+  const seeds = [
+    "The sea kept its secrets until the lantern blinked twice.",
+    "He found the bottle wedged between rocks like a misplaced memory.",
+    "The message was written in his handwriting—older, calmer, afraid.",
+    "Some futures arrive quietly, disguised as coincidence.",
+  ];
+  return `MODEL: ${model}\n\n${seeds[randInt(0, seeds.length - 1)]}\n\nPrompt: ${prompt}\n\nAnd that was the moment everything changed.`;
+}
+
+function mockJudgeJson() {
+  const themeCoherence = randInt(6, 10);
+  const creativity = randInt(6, 10);
+  const fluency = randInt(6, 10);
+  const engagement = randInt(6, 10);
+  const totalScore = themeCoherence + creativity + fluency + engagement;
+  return { themeCoherence, creativity, fluency, engagement, totalScore };
+}
 
 async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
   const controller = new AbortController();
@@ -57,12 +90,52 @@ async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
   }
 }
 
-async function callLiteLLMChatCompletions(payload) {
-  const url = `${BASE_V1}/chat/completions`;
-  const headers = { "Content-Type": "application/json" };
+function isOpenRouterBase(base) {
+  return typeof base === "string" && base.includes("openrouter.ai");
+}
 
-  // LiteLLM Proxy expects Authorization: Bearer <master_key>
-  if (LITELLM_KEY) headers.Authorization = `Bearer ${LITELLM_KEY}`;
+async function callChatCompletions(payload) {
+  // ======================
+  // MOCK MODE
+  // ======================
+  if (MOCK_MODE) {
+    const wantsJson =
+      payload?.response_format?.type === "json_object" ||
+      (payload?.messages || []).some(
+        (m) =>
+          typeof m?.content === "string" &&
+          m.content.toLowerCase().includes("return json")
+      );
+
+    if (wantsJson) {
+      return {
+        choices: [{ message: { content: JSON.stringify(mockJudgeJson()) } }],
+      };
+    }
+
+    const prompt =
+      payload?.messages?.find((m) => m.role === "user")?.content || "";
+    const model = payload?.model || "mock/model";
+    return {
+      choices: [{ message: { content: mockCreativeText(prompt, model) } }],
+    };
+  }
+
+  // ======================
+  // REAL MODE (LiteLLM/OpenRouter/OpenAI compatible)
+  // ======================
+  const url = `${BASE_V1}/chat/completions`;
+
+  const headers = { "Content-Type": "application/json" };
+  if (API_KEY) headers.Authorization = `Bearer ${API_KEY}`;
+
+  // OpenRouter recommended headers (optional but good)
+  if (isOpenRouterBase(RAW_BASE)) {
+    if (process.env.OPENROUTER_SITE_URL)
+      headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL;
+    if (process.env.OPENROUTER_APP_NAME)
+      headers["X-Title"] = process.env.OPENROUTER_APP_NAME;
+  }
 
   const out = await fetchJson(url, {
     method: "POST",
@@ -76,33 +149,37 @@ async function callLiteLLMChatCompletions(payload) {
       out.json?.message ||
       out.json?.detail ||
       out.raw ||
-      `LiteLLM HTTP ${out.status}`;
-
-    throw new Error(
-      `LiteLLM call failed (status ${out.status}). ${String(msg)} | base=${RAW_BASE}`
-    );
+      `Provider HTTP ${out.status}`;
+    throw new Error(String(msg));
   }
 
   return out.json;
 }
 
-// Basic health
-app.get("/health", (_req, res) => res.json({ ok: true }));
+// ======================
+// Routes
+// ======================
+app.get("/health", (_req, res) => res.json({ ok: true, mock: MOCK_MODE }));
 
-// Debug LiteLLM connectivity
-app.get("/api/debug/litellm", async (_req, res) => {
+// Debug provider connectivity (optional)
+app.get("/api/debug/provider", async (_req, res) => {
+  if (MOCK_MODE) {
+    return res.json({
+      mock: true,
+      message: "MOCK_MODE enabled. No external provider calls.",
+    });
+  }
+
   try {
-    const healthUrl = `${RAW_BASE}/health`;
-    const h = await fetchJson(healthUrl);
+    // Many providers expose /v1/models (OpenRouter/OpenAI compatible)
     const models = await fetchJson(`${BASE_V1}/models`, {
-      headers: LITELLM_KEY ? { Authorization: `Bearer ${LITELLM_KEY}` } : {},
+      headers: API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {},
     });
 
     res.json({
+      mock: false,
       base: RAW_BASE,
       baseV1: BASE_V1,
-      hasKey: Boolean(LITELLM_KEY),
-      health: { ok: h.ok, status: h.status, json: h.json },
       models: { ok: models.ok, status: models.status, json: models.json },
     });
   } catch (e) {
@@ -110,7 +187,7 @@ app.get("/api/debug/litellm", async (_req, res) => {
   }
 });
 
-// So opening in browser doesn't show Not Found
+// Make GET not show "Not Found"
 app.get("/api/benchmark", (_req, res) => {
   res.json({ ok: true, hint: "Use POST /api/benchmark with JSON body." });
 });
@@ -128,7 +205,7 @@ app.post("/api/benchmark", async (req, res) => {
     const results = [];
 
     for (const model of models) {
-      const writerResp = await callLiteLLMChatCompletions({
+      const writerResp = await callChatCompletions({
         model,
         temperature: 0.8,
         messages: [
@@ -139,7 +216,7 @@ app.post("/api/benchmark", async (req, res) => {
 
       const output = writerResp?.choices?.[0]?.message?.content || "";
 
-      const judgeResp = await callLiteLLMChatCompletions({
+      const judgeResp = await callChatCompletions({
         model: judgeModel,
         temperature: 0,
         response_format: { type: "json_object" },
@@ -181,8 +258,8 @@ ${output}
 
       results.push({
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        modelName: model.split("/").pop(),
-        provider: model.split("/")[0],
+        modelName: String(model).split("/").pop(),
+        provider: String(model).split("/")[0] || "unknown",
         themeCoherence,
         creativity,
         fluency,
@@ -195,11 +272,13 @@ ${output}
     res.json({ results });
   } catch (err) {
     console.error("❌ /api/benchmark error:", err);
-    res.status(502).json({ error: err?.message || "LiteLLM call failed" });
+    res.status(502).json({ error: err?.message || "Provider call failed" });
   }
 });
 
+// ======================
 // Serve Vite dist
+// ======================
 const distPath = path.join(__dirname, "dist");
 app.use(express.static(distPath));
 
