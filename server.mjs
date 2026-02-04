@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "1mb" }));
 
 function needEnv(name) {
   const v = process.env[name];
@@ -18,74 +18,81 @@ function needEnv(name) {
 }
 
 const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
-const API_KEY = (process.env.LITELLM_API_KEY || "").trim();
+const LITELLM_API_KEY = (process.env.LITELLM_API_KEY || "").trim();
 
-// OpenRouter is already /api/v1, so DO NOT append /v1 again if it's there
-const BASE_V1 =
-  RAW_BASE.endsWith("/v1") ? RAW_BASE : RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
+const OPENROUTER_SITE_URL = (process.env.OPENROUTER_SITE_URL || "").trim();
+const OPENROUTER_APP_NAME = (process.env.OPENROUTER_APP_NAME || "").trim();
+
+// Normalize base so we can call /v1/* reliably
+const BASE_V1 = RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
+const IS_OPENROUTER = RAW_BASE.includes("openrouter.ai");
 
 console.log("✅ Booting server.mjs...");
 console.log("PORT =", process.env.PORT);
 console.log("LITELLM_BASE_URL =", RAW_BASE);
 console.log("BASE_V1 =", BASE_V1);
-console.log("LITELLM_API_KEY =", API_KEY ? "SET" : "MISSING");
+console.log("LITELLM_API_KEY =", LITELLM_API_KEY ? "SET" : "MISSING");
+console.log("IS_OPENROUTER =", IS_OPENROUTER);
 
-/**
- * ✅ UI LABEL -> REAL OPENROUTER MODEL ID
- * You can override these in Render env if client wants different models.
- */
-const MODEL_MAP = {
-  // UI label => OpenRouter model id
-  "GPT-4o Mini": process.env.MODEL_GPT4O_MINI || "openai/gpt-4o-mini",
-  "GPT-4o Mi": process.env.MODEL_GPT4O_MINI || "openai/gpt-4o-mini", // sometimes truncated in UI
-  "GLM 4.7 Flash": process.env.MODEL_GLM_47_FLASH || "google/gemini-1.5-flash",
-  "Kimi K2.5": process.env.MODEL_KIMI_K25 || "anthropic/claude-3.5-sonnet",
+async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
-  // judge dropdown label mapping (if UI shows recommended)
-  "GPT-4o Mini (Recommended)": process.env.MODEL_GPT4O_MINI || "openai/gpt-4o-mini",
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
+
+    const text = await res.text();
+    let json;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = { raw: text };
+    }
+
+    return { ok: res.ok, status: res.status, json, raw: text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ✅ IMPORTANT: map UI labels -> real provider model IDs
+const MODEL_ALIAS = {
+  "GPT-4o Mini": "openai/gpt-4o-mini",
+  "GPT-4o Mi": "openai/gpt-4o-mini", // sometimes truncated label
+  "GLM 4.7 Flash": "z-ai/glm-4.7-flash",
+  "Kimi K2.5": "moonshotai/kimi-k2.5",
+  // add more aliases if your UI has more display names
 };
 
 function normalizeModelId(input) {
-  const s = String(input || "").trim();
-  if (!s) return "";
+  let m = String(input || "").trim();
+  if (!m) return m;
 
-  // If already looks like openrouter id "provider/model", keep it
-  if (s.includes("/")) return s;
+  // If UI sends "openrouter/<provider>/<model>", OpenRouter expects "<provider>/<model>"
+  if (m.startsWith("openrouter/")) m = m.slice("openrouter/".length);
 
-  // Try exact match
-  if (MODEL_MAP[s]) return MODEL_MAP[s];
+  // If UI sends display name, map it
+  if (MODEL_ALIAS[m]) m = MODEL_ALIAS[m];
 
-  // Try loose match (handles UI truncation like "GPT-4o Mi...")
-  const lower = s.toLowerCase();
-  if (lower.includes("gpt") && lower.includes("mini")) return MODEL_MAP["GPT-4o Mini"];
-  if (lower.includes("glm")) return MODEL_MAP["GLM 4.7 Flash"];
-  if (lower.includes("kimi")) return MODEL_MAP["Kimi K2.5"];
-
-  return ""; // unknown -> will error clearly
-}
-
-async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
-  const res = await fetch(url, { method, headers, body });
-  const text = await res.text();
-  let json = {};
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
-  }
-  return { ok: res.ok, status: res.status, json, raw: text };
+  return m;
 }
 
 async function callChatCompletions(payload) {
   const url = `${BASE_V1}/chat/completions`;
 
-  const headers = {
-    "Content-Type": "application/json",
-    ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
-    // These headers are optional but recommended by OpenRouter
-    ...(process.env.OPENROUTER_SITE_URL ? { "HTTP-Referer": process.env.OPENROUTER_SITE_URL } : {}),
-    ...(process.env.OPENROUTER_APP_NAME ? { "X-Title": process.env.OPENROUTER_APP_NAME } : {}),
-  };
+  const headers = { "Content-Type": "application/json" };
+  if (LITELLM_API_KEY) headers.Authorization = `Bearer ${LITELLM_API_KEY}`;
+
+  // OpenRouter recommended headers (helps routing + prevents some auth issues)
+  if (IS_OPENROUTER) {
+    if (OPENROUTER_SITE_URL) headers["HTTP-Referer"] = OPENROUTER_SITE_URL;
+    if (OPENROUTER_APP_NAME) headers["X-Title"] = OPENROUTER_APP_NAME;
+  }
 
   const out = await fetchJson(url, {
     method: "POST",
@@ -100,72 +107,58 @@ async function callChatCompletions(payload) {
       out.json?.detail ||
       out.raw ||
       `HTTP ${out.status}`;
-    throw new Error(`OpenRouter error: ${msg}`);
+    throw new Error(String(msg));
   }
 
   return out.json;
 }
 
-/** Health */
+// Basic health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-/** Debug (open in browser) */
-app.get("/api/debug/provider", async (_req, res) => {
-  const models = await fetchJson(`${BASE_V1}/models`, {
-    headers: API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {},
-  });
+// Debug endpoint (useful to confirm OpenRouter/LiteLLM connectivity)
+app.get("/api/debug/litellm", async (_req, res) => {
+  try {
+    const models = await fetchJson(`${BASE_V1}/models`, {
+      headers: LITELLM_API_KEY ? { Authorization: `Bearer ${LITELLM_API_KEY}` } : {},
+    });
 
-  res.json({
-    base: RAW_BASE,
-    baseV1: BASE_V1,
-    hasKey: Boolean(API_KEY),
-    modelMap: MODEL_MAP,
-    modelsOk: models.ok,
-    modelsStatus: models.status,
-    modelsSample:
-      Array.isArray(models.json?.data) ? models.json.data.slice(0, 20).map((m) => m.id) : models.json,
-  });
+    res.json({
+      base: RAW_BASE,
+      baseV1: BASE_V1,
+      hasKey: !!LITELLM_API_KEY,
+      isOpenRouter: IS_OPENROUTER,
+      modelsOk: models.ok,
+      modelsStatus: models.status,
+      modelsSample:
+        Array.isArray(models.json?.data) ? models.json.data.slice(0, 20) : models.json,
+      modelMap: MODEL_ALIAS,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "debug failed" });
+  }
 });
 
-/** Hint for GET */
+// So opening in browser doesn't show Not Found
 app.get("/api/benchmark", (_req, res) => {
   res.json({ ok: true, hint: "Use POST /api/benchmark with JSON body." });
 });
 
-/** Benchmark */
 app.post("/api/benchmark", async (req, res) => {
   try {
     const prompt = String(req.body?.prompt || "").trim();
-    const modelsIn = Array.isArray(req.body?.models) ? req.body.models : [];
-    const judgeIn = String(req.body?.judgeModel || "").trim();
+    const models = Array.isArray(req.body?.models) ? req.body.models : [];
+    const judgeModel = String(req.body?.judgeModel || "").trim();
 
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
-    if (!modelsIn.length) return res.status(400).json({ error: "models[] is required" });
-    if (!judgeIn) return res.status(400).json({ error: "judgeModel is required" });
-
-    const models = modelsIn.map(normalizeModelId).filter(Boolean);
-    const judgeModel = normalizeModelId(judgeIn);
-
-    if (!models.length) {
-      return res.status(400).json({
-        error: "No valid models after mapping. Fix MODEL_MAP or UI values.",
-        received: modelsIn,
-        mapped: models,
-        modelMap: MODEL_MAP,
-      });
-    }
-    if (!judgeModel) {
-      return res.status(400).json({
-        error: "Judge model not valid after mapping. Fix MODEL_MAP or UI value.",
-        received: judgeIn,
-        modelMap: MODEL_MAP,
-      });
-    }
+    if (!models.length) return res.status(400).json({ error: "models[] is required" });
+    if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
 
     const results = [];
 
-    for (const model of models) {
-      const t0 = Date.now();
+    for (const rawModel of models) {
+      const model = normalizeModelId(rawModel);
+      const judge = normalizeModelId(judgeModel);
 
       const writerResp = await callChatCompletions({
         model,
@@ -179,7 +172,7 @@ app.post("/api/benchmark", async (req, res) => {
       const output = writerResp?.choices?.[0]?.message?.content || "";
 
       const judgeResp = await callChatCompletions({
-        model: judgeModel,
+        model: judge,
         temperature: 0,
         response_format: { type: "json_object" },
         messages: [
@@ -227,22 +220,22 @@ ${output}
         fluency,
         engagement,
         totalScore,
-        latency: Date.now() - t0,
+        latency: 0,
       });
     }
 
     res.json({ results });
   } catch (err) {
     console.error("❌ /api/benchmark error:", err);
-    res.status(502).json({ error: err?.message || "Provider call failed" });
+    res.status(502).json({ error: err?.message || "Model call failed" });
   }
 });
 
-/** Serve Vite dist */
+// Serve Vite dist
 const distPath = path.join(__dirname, "dist");
 app.use(express.static(distPath));
 
-/** SPA fallback */
+// SPA fallback
 app.use((req, res, next) => {
   if (req.method !== "GET") return next();
   if (req.path.includes(".") || req.path.startsWith("/assets/")) return next();
