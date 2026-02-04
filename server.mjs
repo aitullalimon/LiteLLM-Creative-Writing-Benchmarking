@@ -17,28 +17,34 @@ function needEnv(name) {
   return v;
 }
 
-const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
+const RAW_BASE = (process.env.LITELLM_BASE_URL || "").trim().replace(/\/$/, "");
 const LITELLM_API_KEY = (process.env.LITELLM_API_KEY || "").trim();
 
-// Optional OpenRouter identification headers (recommended)
 const OPENROUTER_SITE_URL = (process.env.OPENROUTER_SITE_URL || "").trim();
 const OPENROUTER_APP_NAME = (process.env.OPENROUTER_APP_NAME || "").trim();
 
-// Normalize base so we can call /v1/* reliably
-const BASE_V1 = RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
+const MOCK_MODE = String(process.env.MOCK_MODE || "").trim().toLowerCase() === "true";
+
+const BASE_V1 = RAW_BASE
+  ? RAW_BASE.endsWith("/v1")
+    ? RAW_BASE
+    : `${RAW_BASE}/v1`
+  : "";
 
 console.log("✅ Booting server.mjs...");
 console.log("PORT =", process.env.PORT);
-console.log("LITELLM_BASE_URL =", RAW_BASE);
+console.log("LITELLM_BASE_URL =", RAW_BASE || "(not set)");
 console.log("LITELLM_API_KEY =", LITELLM_API_KEY ? "SET" : "MISSING");
 console.log("OPENROUTER_SITE_URL =", OPENROUTER_SITE_URL || "(not set)");
 console.log("OPENROUTER_APP_NAME =", OPENROUTER_APP_NAME || "(not set)");
+console.log("MOCK_MODE =", MOCK_MODE);
 
 function buildHeaders() {
   const headers = { "Content-Type": "application/json" };
+
   if (LITELLM_API_KEY) headers.Authorization = `Bearer ${LITELLM_API_KEY}`;
 
-  // OpenRouter recommended headers (safe even if not OpenRouter)
+  // OpenRouter recommended headers (safe to include)
   if (OPENROUTER_SITE_URL) headers["HTTP-Referer"] = OPENROUTER_SITE_URL;
   if (OPENROUTER_APP_NAME) headers["X-Title"] = OPENROUTER_APP_NAME;
 
@@ -70,22 +76,16 @@ function normalizeModelId(input) {
   let m = String(input || "").trim();
   if (!m) return m;
 
-  // Remove UI junk
   m = m.replace(/\(Recommended\)/gi, "").replace(/Recommended/gi, "").trim();
   m = m.replace(/…/g, "").trim();
 
-  // If UI sends openrouter/<provider>/<model>, OpenRouter expects <provider>/<model>
   if (m.toLowerCase().startsWith("openrouter/")) m = m.slice("openrouter/".length);
 
-  // Handle truncated label like "GPT-4o Mi"
-  const compact = m.replace(/\./g, "").trim().toLowerCase();
-  if (compact === "gpt-4o mi" || compact === "gpt-4o mini") return "openai/gpt-4o-mini";
-
-  // Map UI labels to real ids
   const MODEL_ALIAS = {
     "GPT-4o Mini": "openai/gpt-4o-mini",
     "GLM 4.7 Flash": "z-ai/glm-4.7-flash",
     "Kimi K2.5": "moonshotai/kimi-k2.5",
+    "GPT-4o Mi": "openai/gpt-4o-mini",
   };
 
   if (MODEL_ALIAS[m]) return MODEL_ALIAS[m];
@@ -93,7 +93,41 @@ function normalizeModelId(input) {
   return m;
 }
 
+function safeModelLabel(raw, id) {
+  const s = String(raw || "").trim();
+  if (s) return s;
+  return id;
+}
+
+// ---- MOCK HELPERS (for demo visuals) ----
+function hashSeed(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+function clamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function mockScores(prompt, modelId) {
+  const seed = hashSeed(`${prompt}||${modelId}`);
+  const themeCoherence = clamp(5 + (seed % 6), 0, 10);          // 5..10
+  const creativity = clamp(4 + ((seed * 3) % 7), 0, 10);        // 4..10
+  const fluency = clamp(6 + ((seed * 7) % 5), 0, 10);           // 6..10
+  const engagement = clamp(4 + ((seed * 11) % 7), 0, 10);       // 4..10
+  const totalScore = themeCoherence + creativity + fluency + engagement; // 0..40-ish
+  const latency = 400 + (seed % 1200);
+
+  return { themeCoherence, creativity, fluency, engagement, totalScore, latency };
+}
+
 async function callChatCompletions(payload) {
+  if (!BASE_V1) throw new Error("LITELLM_BASE_URL is not set");
+
   const url = `${BASE_V1}/chat/completions`;
   const out = await fetchJson(url, {
     method: "POST",
@@ -108,9 +142,6 @@ async function callChatCompletions(payload) {
       out.json?.detail ||
       out.raw ||
       `HTTP ${out.status}`;
-
-    // Make OpenRouter credit errors obvious in logs
-    console.error("❌ Provider error:", msg);
     throw new Error(String(msg));
   }
 
@@ -120,18 +151,32 @@ async function callChatCompletions(payload) {
 // Health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Debug endpoint (to verify key + models quickly)
+// Debug (quick check)
 app.get("/api/debug/litellm", async (_req, res) => {
-  const models = await fetchJson(`${BASE_V1}/models`, { headers: buildHeaders() });
-  res.json({
-    base: RAW_BASE,
-    baseV1: BASE_V1,
-    hasKey: !!LITELLM_API_KEY,
-    modelsOk: models.ok,
-    modelsStatus: models.status,
-    // keep it small
-    modelsSample: Array.isArray(models.json?.data) ? models.json.data.slice(0, 5) : models.json,
-  });
+  if (MOCK_MODE) {
+    return res.json({
+      mockMode: true,
+      hasKey: !!LITELLM_API_KEY,
+      base: RAW_BASE,
+      baseV1: BASE_V1,
+      note: "MOCK_MODE=true so /api/benchmark returns demo results (no provider call).",
+    });
+  }
+
+  try {
+    const models = await fetchJson(`${BASE_V1}/models`, { headers: buildHeaders() });
+    res.json({
+      mockMode: false,
+      hasKey: !!LITELLM_API_KEY,
+      base: RAW_BASE,
+      baseV1: BASE_V1,
+      modelsOk: models.ok,
+      modelsStatus: models.status,
+      modelsSample: Array.isArray(models.json?.data) ? models.json.data.slice(0, 5) : models.json,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "debug failed" });
+  }
 });
 
 // Friendly GET
@@ -140,22 +185,45 @@ app.get("/api/benchmark", (_req, res) => {
 });
 
 app.post("/api/benchmark", async (req, res) => {
+  const prompt = String(req.body?.prompt || "").trim();
+  const models = Array.isArray(req.body?.models) ? req.body.models : [];
+  const judgeModel = String(req.body?.judgeModel || "").trim();
+
+  if (!prompt) return res.status(400).json({ error: "prompt is required" });
+  if (!models.length) return res.status(400).json({ error: "models[] is required" });
+  if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
+
+  // ✅ MOCK MODE: Return results immediately so UI charts render
+  if (MOCK_MODE) {
+    const results = models.map((raw) => {
+      const modelId = normalizeModelId(raw);
+      const s = mockScores(prompt, modelId);
+      return {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        modelName: safeModelLabel(raw, modelId),
+        provider: modelId.split("/")[0] || "mock",
+        themeCoherence: s.themeCoherence,
+        creativity: s.creativity,
+        fluency: s.fluency,
+        engagement: s.engagement,
+        totalScore: s.totalScore,
+        latency: s.latency,
+        mock: true,
+      };
+    });
+
+    return res.json({ results, mockMode: true });
+  }
+
+  // REAL MODE
   try {
-    const prompt = String(req.body?.prompt || "").trim();
-    const models = Array.isArray(req.body?.models) ? req.body.models : [];
-    const judgeModel = String(req.body?.judgeModel || "").trim();
-
-    if (!prompt) return res.status(400).json({ error: "prompt is required" });
-    if (!models.length) return res.status(400).json({ error: "models[] is required" });
-    if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
-
     const results = [];
     const judgeId = normalizeModelId(judgeModel);
 
-    for (const modelRaw of models) {
-      const modelId = normalizeModelId(modelRaw);
+    for (const raw of models) {
+      const modelId = normalizeModelId(raw);
 
-      // 1) Generate
+      // (1) Generate
       const writerResp = await callChatCompletions({
         model: modelId,
         temperature: 0.8,
@@ -167,7 +235,7 @@ app.post("/api/benchmark", async (req, res) => {
 
       const output = writerResp?.choices?.[0]?.message?.content || "";
 
-      // 2) Judge
+      // (2) Judge
       const judgeResp = await callChatCompletions({
         model: judgeId,
         temperature: 0,
@@ -210,7 +278,7 @@ ${output}
 
       results.push({
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        modelName: String(modelRaw),
+        modelName: safeModelLabel(raw, modelId),
         provider: modelId.split("/")[0],
         themeCoherence,
         creativity,
@@ -218,16 +286,16 @@ ${output}
         engagement,
         totalScore,
         latency: 0,
+        mock: false,
       });
     }
 
-    res.json({ results });
+    res.json({ results, mockMode: false });
   } catch (err) {
-    // If OpenRouter has no credits, the error will show here clearly
     res.status(502).json({
       error: err?.message || "Provider call failed",
       hint:
-        "If you see 'Insufficient credits' then the OpenRouter key has no credits. Use a funded key.",
+        "If you see 'Insufficient credits', enable MOCK_MODE=true for demo visuals until billing is active.",
     });
   }
 });
