@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 
 function needEnv(name) {
   const v = process.env[name];
@@ -20,34 +20,40 @@ function needEnv(name) {
 const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
 const LITELLM_API_KEY = (process.env.LITELLM_API_KEY || "").trim();
 
+// Optional OpenRouter identification headers (recommended)
 const OPENROUTER_SITE_URL = (process.env.OPENROUTER_SITE_URL || "").trim();
 const OPENROUTER_APP_NAME = (process.env.OPENROUTER_APP_NAME || "").trim();
 
 // Normalize base so we can call /v1/* reliably
 const BASE_V1 = RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
-const IS_OPENROUTER = RAW_BASE.includes("openrouter.ai");
 
 console.log("✅ Booting server.mjs...");
 console.log("PORT =", process.env.PORT);
 console.log("LITELLM_BASE_URL =", RAW_BASE);
-console.log("BASE_V1 =", BASE_V1);
 console.log("LITELLM_API_KEY =", LITELLM_API_KEY ? "SET" : "MISSING");
-console.log("IS_OPENROUTER =", IS_OPENROUTER);
+console.log("OPENROUTER_SITE_URL =", OPENROUTER_SITE_URL || "(not set)");
+console.log("OPENROUTER_APP_NAME =", OPENROUTER_APP_NAME || "(not set)");
+
+function buildHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (LITELLM_API_KEY) headers.Authorization = `Bearer ${LITELLM_API_KEY}`;
+
+  // OpenRouter recommended headers (safe even if not OpenRouter)
+  if (OPENROUTER_SITE_URL) headers["HTTP-Referer"] = OPENROUTER_SITE_URL;
+  if (OPENROUTER_APP_NAME) headers["X-Title"] = OPENROUTER_APP_NAME;
+
+  return headers;
+}
 
 async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body,
-      signal: controller.signal,
-    });
-
+    const res = await fetch(url, { method, headers, body, signal: controller.signal });
     const text = await res.text();
-    let json;
+
+    let json = {};
     try {
       json = text ? JSON.parse(text) : {};
     } catch {
@@ -60,43 +66,38 @@ async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
   }
 }
 
-// ✅ IMPORTANT: map UI labels -> real provider model IDs
-const MODEL_ALIAS = {
-  "GPT-4o Mini": "openai/gpt-4o-mini",
-  "GPT-4o Mi": "openai/gpt-4o-mini", // sometimes truncated label
-  "GLM 4.7 Flash": "z-ai/glm-4.7-flash",
-  "Kimi K2.5": "moonshotai/kimi-k2.5",
-  // add more aliases if your UI has more display names
-};
-
 function normalizeModelId(input) {
   let m = String(input || "").trim();
   if (!m) return m;
 
-  // If UI sends "openrouter/<provider>/<model>", OpenRouter expects "<provider>/<model>"
-  if (m.startsWith("openrouter/")) m = m.slice("openrouter/".length);
+  // Remove UI junk
+  m = m.replace(/\(Recommended\)/gi, "").replace(/Recommended/gi, "").trim();
+  m = m.replace(/…/g, "").trim();
 
-  // If UI sends display name, map it
-  if (MODEL_ALIAS[m]) m = MODEL_ALIAS[m];
+  // If UI sends openrouter/<provider>/<model>, OpenRouter expects <provider>/<model>
+  if (m.toLowerCase().startsWith("openrouter/")) m = m.slice("openrouter/".length);
+
+  // Handle truncated label like "GPT-4o Mi"
+  const compact = m.replace(/\./g, "").trim().toLowerCase();
+  if (compact === "gpt-4o mi" || compact === "gpt-4o mini") return "openai/gpt-4o-mini";
+
+  // Map UI labels to real ids
+  const MODEL_ALIAS = {
+    "GPT-4o Mini": "openai/gpt-4o-mini",
+    "GLM 4.7 Flash": "z-ai/glm-4.7-flash",
+    "Kimi K2.5": "moonshotai/kimi-k2.5",
+  };
+
+  if (MODEL_ALIAS[m]) return MODEL_ALIAS[m];
 
   return m;
 }
 
 async function callChatCompletions(payload) {
   const url = `${BASE_V1}/chat/completions`;
-
-  const headers = { "Content-Type": "application/json" };
-  if (LITELLM_API_KEY) headers.Authorization = `Bearer ${LITELLM_API_KEY}`;
-
-  // OpenRouter recommended headers (helps routing + prevents some auth issues)
-  if (IS_OPENROUTER) {
-    if (OPENROUTER_SITE_URL) headers["HTTP-Referer"] = OPENROUTER_SITE_URL;
-    if (OPENROUTER_APP_NAME) headers["X-Title"] = OPENROUTER_APP_NAME;
-  }
-
   const out = await fetchJson(url, {
     method: "POST",
-    headers,
+    headers: buildHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -107,39 +108,33 @@ async function callChatCompletions(payload) {
       out.json?.detail ||
       out.raw ||
       `HTTP ${out.status}`;
+
+    // Make OpenRouter credit errors obvious in logs
+    console.error("❌ Provider error:", msg);
     throw new Error(String(msg));
   }
 
   return out.json;
 }
 
-// Basic health
+// Health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Debug endpoint (useful to confirm OpenRouter/LiteLLM connectivity)
+// Debug endpoint (to verify key + models quickly)
 app.get("/api/debug/litellm", async (_req, res) => {
-  try {
-    const models = await fetchJson(`${BASE_V1}/models`, {
-      headers: LITELLM_API_KEY ? { Authorization: `Bearer ${LITELLM_API_KEY}` } : {},
-    });
-
-    res.json({
-      base: RAW_BASE,
-      baseV1: BASE_V1,
-      hasKey: !!LITELLM_API_KEY,
-      isOpenRouter: IS_OPENROUTER,
-      modelsOk: models.ok,
-      modelsStatus: models.status,
-      modelsSample:
-        Array.isArray(models.json?.data) ? models.json.data.slice(0, 20) : models.json,
-      modelMap: MODEL_ALIAS,
-    });
-  } catch (e) {
-    res.status(500).json({ error: e?.message || "debug failed" });
-  }
+  const models = await fetchJson(`${BASE_V1}/models`, { headers: buildHeaders() });
+  res.json({
+    base: RAW_BASE,
+    baseV1: BASE_V1,
+    hasKey: !!LITELLM_API_KEY,
+    modelsOk: models.ok,
+    modelsStatus: models.status,
+    // keep it small
+    modelsSample: Array.isArray(models.json?.data) ? models.json.data.slice(0, 5) : models.json,
+  });
 });
 
-// So opening in browser doesn't show Not Found
+// Friendly GET
 app.get("/api/benchmark", (_req, res) => {
   res.json({ ok: true, hint: "Use POST /api/benchmark with JSON body." });
 });
@@ -155,13 +150,14 @@ app.post("/api/benchmark", async (req, res) => {
     if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
 
     const results = [];
+    const judgeId = normalizeModelId(judgeModel);
 
-    for (const rawModel of models) {
-      const model = normalizeModelId(rawModel);
-      const judge = normalizeModelId(judgeModel);
+    for (const modelRaw of models) {
+      const modelId = normalizeModelId(modelRaw);
 
+      // 1) Generate
       const writerResp = await callChatCompletions({
-        model,
+        model: modelId,
         temperature: 0.8,
         messages: [
           { role: "system", content: "You are a creative writing assistant." },
@@ -171,8 +167,9 @@ app.post("/api/benchmark", async (req, res) => {
 
       const output = writerResp?.choices?.[0]?.message?.content || "";
 
+      // 2) Judge
       const judgeResp = await callChatCompletions({
-        model: judge,
+        model: judgeId,
         temperature: 0,
         response_format: { type: "json_object" },
         messages: [
@@ -187,7 +184,7 @@ PROMPT:
 ${prompt}
 
 MODEL:
-${model}
+${modelId}
 
 OUTPUT:
 ${output}
@@ -196,8 +193,8 @@ ${output}
         ],
       });
 
-      let scores = {};
       const judgeText = judgeResp?.choices?.[0]?.message?.content || "{}";
+      let scores = {};
       try {
         scores = JSON.parse(judgeText);
       } catch {
@@ -213,8 +210,8 @@ ${output}
 
       results.push({
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        modelName: model.split("/").pop(),
-        provider: model.split("/")[0],
+        modelName: String(modelRaw),
+        provider: modelId.split("/")[0],
         themeCoherence,
         creativity,
         fluency,
@@ -226,8 +223,12 @@ ${output}
 
     res.json({ results });
   } catch (err) {
-    console.error("❌ /api/benchmark error:", err);
-    res.status(502).json({ error: err?.message || "Model call failed" });
+    // If OpenRouter has no credits, the error will show here clearly
+    res.status(502).json({
+      error: err?.message || "Provider call failed",
+      hint:
+        "If you see 'Insufficient credits' then the OpenRouter key has no credits. Use a funded key.",
+    });
   }
 });
 
