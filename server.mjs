@@ -1,5 +1,3 @@
-// server.mjs (FULL UPDATED CODE)
-
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -15,88 +13,113 @@ console.log("PORT =", process.env.PORT);
 console.log("LITELLM_BASE_URL =", process.env.LITELLM_BASE_URL ? "SET" : "MISSING");
 console.log("LITELLM_API_KEY =", process.env.LITELLM_API_KEY ? "SET" : "MISSING");
 
-function getEnv(name, optional = false) {
+function needEnv(name) {
   const v = process.env[name];
-  if (!v && !optional) {
+  if (!v) {
     console.error(`❌ Missing required env var: ${name}`);
     process.exit(1);
   }
   return v;
 }
 
-const LITELLM_BASE_URL = getEnv("LITELLM_BASE_URL");
-const LITELLM_API_KEY = process.env.LITELLM_API_KEY; // optional
+const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
+const LITELLM_API_KEY = (process.env.LITELLM_API_KEY || "").trim();
 
-async function callLiteLLM(payload) {
-  const url = `${LITELLM_BASE_URL.replace(/\/$/, "")}/v1/chat/completions`;
+// Normalize base so we can call /v1/* reliably
+const BASE_V1 = RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
+
+async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
+
+    const text = await res.text();
+    let json;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = { raw: text };
+    }
+
+    return { ok: res.ok, status: res.status, json, raw: text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function callLiteLLMChatCompletions(payload) {
+  const url = `${BASE_V1}/chat/completions`;
   const headers = { "Content-Type": "application/json" };
   if (LITELLM_API_KEY) headers.Authorization = `Bearer ${LITELLM_API_KEY}`;
 
-  const res = await fetch(url, {
+  const out = await fetchJson(url, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
   });
 
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.error?.message || `LiteLLM HTTP ${res.status}`);
+  if (!out.ok) {
+    const msg =
+      out.json?.error?.message ||
+      out.json?.message ||
+      out.json?.detail ||
+      out.raw ||
+      `LiteLLM HTTP ${out.status}`;
+    throw new Error(String(msg));
   }
-  return json;
+
+  return out.json;
 }
 
+// Basic health
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Debug LiteLLM connectivity
+app.get("/api/debug/litellm", async (_req, res) => {
+  try {
+    const healthUrl = RAW_BASE.endsWith("/health") ? RAW_BASE : `${RAW_BASE}/health`;
+    const h = await fetchJson(healthUrl);
+    const models = await fetchJson(`${BASE_V1}/models`, {
+      headers: LITELLM_API_KEY ? { Authorization: `Bearer ${LITELLM_API_KEY}` } : {},
+    });
+
+    res.json({
+      base: RAW_BASE,
+      baseV1: BASE_V1,
+      health: { ok: h.ok, status: h.status, json: h.json },
+      models: { ok: models.ok, status: models.status, json: models.json },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "debug failed" });
+  }
+});
+
+// So opening in browser doesn't show Not Found
+app.get("/api/benchmark", (_req, res) => {
+  res.json({ ok: true, hint: "Use POST /api/benchmark with JSON body." });
+});
 
 app.post("/api/benchmark", async (req, res) => {
   try {
     const prompt = String(req.body?.prompt || "").trim();
     const models = Array.isArray(req.body?.models) ? req.body.models : [];
-    const judgeModelUI = String(req.body?.judgeModel || "").trim();
+    const judgeModel = String(req.body?.judgeModel || "").trim();
 
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
     if (!models.length) return res.status(400).json({ error: "models[] is required" });
-    if (!judgeModelUI) return res.status(400).json({ error: "judgeModel is required" });
-
-    // ✅ FIX: Map UI names -> LiteLLM provider/model IDs
-    const MODEL_MAP = {
-      // Writers
-      "GPT-4o Mini": "openai/gpt-4o-mini",
-      "GLM 4.7 Flash": "zhipu/glm-4.7",
-      "Kimi K2.5": "moonshot/kimi-k2",
-
-      // Judge (if UI uses same name)
-      "GPT-4o Mini (Recommended)": "openai/gpt-4o-mini",
-      "GPT-4o Mini (Recommended) ": "openai/gpt-4o-mini", // safety for trailing space
-      "GPT-4o Mini — Recommended": "openai/gpt-4o-mini",
-    };
-
-    const judgeModel = MODEL_MAP[judgeModelUI] || judgeModelUI; // allow already-correct values
+    if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
 
     const results = [];
 
-    for (const uiModel of models) {
-      const model = MODEL_MAP[uiModel] || uiModel; // allow already-correct values
-
-      if (!model.includes("/")) {
-        console.error("❌ Unknown model from UI:", uiModel);
-        results.push({
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          modelName: uiModel,
-          provider: "unknown",
-          themeCoherence: 0,
-          creativity: 0,
-          fluency: 0,
-          engagement: 0,
-          totalScore: 0,
-          latency: 0,
-          error: `Unknown model: ${uiModel}`,
-        });
-        continue;
-      }
-
-      const started = Date.now();
-
-      const writerResp = await callLiteLLM({
+    for (const model of models) {
+      const writerResp = await callLiteLLMChatCompletions({
         model,
         temperature: 0.8,
         messages: [
@@ -107,7 +130,7 @@ app.post("/api/benchmark", async (req, res) => {
 
       const output = writerResp?.choices?.[0]?.message?.content || "";
 
-      const judgeResp = await callLiteLLM({
+      const judgeResp = await callLiteLLMChatCompletions({
         model: judgeModel,
         temperature: 0,
         response_format: { type: "json_object" },
@@ -156,25 +179,22 @@ ${output}
         fluency,
         engagement,
         totalScore,
-        latency: Date.now() - started,
+        latency: 0,
       });
     }
 
     res.json({ results });
   } catch (err) {
     console.error("❌ /api/benchmark error:", err);
-    res.status(500).json({ error: err?.message || "server error" });
+    res.status(502).json({ error: err?.message || "LiteLLM call failed" });
   }
 });
 
-// Serve dist safely (no "*" routes)
+// Serve Vite dist
 const distPath = path.join(__dirname, "dist");
 app.use(express.static(distPath));
 
-app.use("/api", (_req, res) => {
-  res.status(404).json({ error: "API route not found" });
-});
-
+// SPA fallback
 app.use((req, res, next) => {
   if (req.method !== "GET") return next();
   if (req.path.includes(".") || req.path.startsWith("/assets/")) return next();
@@ -182,6 +202,4 @@ app.use((req, res, next) => {
 });
 
 const port = process.env.PORT || 10000;
-app.listen(port, () => {
-  console.log(`✅ Server listening on port ${port}`);
-});
+app.listen(port, () => console.log(`✅ Server listening on port ${port}`));
