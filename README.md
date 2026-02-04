@@ -97,12 +97,12 @@ Switch modes via environment variables — no code changes required.
 
 ### Evaluation Metrics
 #### Each model output is scored on:
-Metric	Range
-Theme Coherence	0–10
-Creativity	0–10
-Fluency	0–10
-Engagement	0–10
-Total Score	0–40
+    Metric	Range
+    Theme Coherence	0–10
+    Creativity	0–10
+    Fluency	0–10
+    Engagement	0–10
+    Total Score	0–40
 
 ### API Endpoint
 POST /api/benchmark
