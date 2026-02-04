@@ -33,7 +33,7 @@ Run in Demo Mode (no API credits required) or Live Mode (OpenRouter / LiteLLM)
     . Client presentations
 
 
-### Key Features
+## Key Features
     . Multi-model benchmarking (OpenAI, OpenRouter, Anthropic, Moonshot, etc.)
     . LLM-as-a-Judge evaluation pipeline
     . Multi-metric scoring (0–40 total score)
@@ -59,39 +59,38 @@ Node.js Server (Express)
         ↓
 LiteLLM / OpenRouter
 
-### Environment Variables
+## Environment Variables
 
     Configure the following in Render → Environment or a local .env file.
     Required (Live Mode)
     LITELLM_BASE_URL=https://openrouter.ai/api/v1
     LITELLM_API_KEY=sk-or-xxxxxxxxxxxxxxxx
-    Optional (Demo Mode)
+### Optional (Demo Mode)
     MOCK_MODE=true
 
 When MOCK_MODE=true, the app renders charts and scores without calling external APIs — perfect for demos when credits are unavailable.
 
-### Running Locally
+## Running Locally
     npm install
     npm run build
     npm start
-
 ### App will run on:
 http://localhost:10000
 
-### Production Deployment
+## Production Deployment
     Hosted on Render
     Auto-deploys on main branch push
     Uses Node.js + static Vite build
-    To redeploy:
+### To redeploy:
     git push origin main
 
-### Demo vs Live Mode
+## Demo vs Live Mode
 Mode	Description
 Demo Mode	Visual demo with mock scores (no billing)
 Live Mode	Real API calls using OpenRouter / LiteLLM
 Switch modes via environment variables — no code changes required.
 
-### Evaluation Metrics
+## Evaluation Metrics
 #### Each model output is scored on:
     Metric	Range
     Theme Coherence	0–10
@@ -100,15 +99,16 @@ Switch modes via environment variables — no code changes required.
     Engagement	0–10
     Total Score	0–40
 
-### API Endpoint
-POST /api/benchmark
-Request
+## API Endpoint
+### POST /api/benchmark
+### Request
 {
   "prompt": "Write a short story about a lighthouse keeper...",
   "models": ["openai/gpt-4o-mini"],
   "judgeModel": "openai/gpt-4o-mini"
 }
-Response
+
+### Response
 {
   "results": [
     {
@@ -123,14 +123,14 @@ Response
   ]
 }
 
-### Notes for Client
+## Notes for Client
 If results do not appear:
 Check API credits
 Verify LITELLM_API_KEY
 Use Demo Mode for preview
 Model availability depends on OpenRouter account permissions
 
-### Author
+## Author
 Creative Writing Benchmark
 Developed by Aitulla Labib Limon
 Research & AI Engineering
