@@ -47,7 +47,7 @@ Benchmark Configuration
 Results & Charts
 Leaderboard
 
-### Architecture
+## Architecture
 
 Frontend (React + Vite)
         |
