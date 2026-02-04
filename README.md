@@ -75,22 +75,19 @@ MOCK_MODE=true
 When MOCK_MODE=true, the app renders charts and scores without calling external APIs — perfect for demos when credits are unavailable.
 
 ### Running Locally
-npm install
+    npm install
+    npm run build
+    npm start
 
-npm run build
-
-npm start
-
-App will run on:
-
+### App will run on:
 http://localhost:10000
 
 ### Production Deployment
-Hosted on Render
-Auto-deploys on main branch push
-Uses Node.js + static Vite build
-To redeploy:
-git push origin main
+    Hosted on Render
+    Auto-deploys on main branch push
+    Uses Node.js + static Vite build
+    To redeploy:
+    git push origin main
 
 ### Demo vs Live Mode
 Mode	Description
@@ -99,7 +96,7 @@ Live Mode	Real API calls using OpenRouter / LiteLLM
 Switch modes via environment variables — no code changes required.
 
 ### Evaluation Metrics
-Each model output is scored on:
+#### Each model output is scored on:
 Metric	Range
 Theme Coherence	0–10
 Creativity	0–10
@@ -139,5 +136,5 @@ Model availability depends on OpenRouter account permissions
 
 ### Author
 Creative Writing Benchmark
-Developed by Labib
+Developed by Aitulla Labib Limon
 Research & AI Engineering
