@@ -17,10 +17,10 @@ Compare multiple LLMs on the same creative prompt
 Automatically evaluate outputs using a judge model
 
 ### Score models on:
-        . Theme Coherence
-        . Creativity
-        . Fluency
-        . Engagement
+    . Theme Coherence
+    . Creativity
+    . Fluency
+    . Engagement
 
 Visualize results through charts and leaderboards
 
