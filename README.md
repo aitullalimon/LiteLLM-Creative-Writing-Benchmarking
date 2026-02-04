@@ -2,7 +2,7 @@
 
 ## Project info
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+**URL**: https://litellm-creative-writing-benchmarking-xclo.onrender.com
 
 ##  Creative Writing Benchmark
 
