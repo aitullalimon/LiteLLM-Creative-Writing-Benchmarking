@@ -4,17 +4,17 @@
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
-## 📘 Creative Writing Benchmark
+##  Creative Writing Benchmark
 
 LLM Evaluation Platform for Creative Writing Quality
 A research-grade web application for benchmarking large language models (LLMs) on creative writing tasks, using multi-metric evaluation and LLM-as-a-judge scoring.
 
 
-## 🔍 Overview
+##  Overview
 ### Creative Writing Benchmark allows users to:
 . Compare multiple LLMs on the same creative prompt
 . Automatically evaluate outputs using a judge model
-### . Score models on:
+### Score models on:
     . Theme Coherence
     . Creativity
     . Fluency
@@ -29,7 +29,7 @@ A research-grade web application for benchmarking large language models (LLMs) o
 . Client presentations
 
 
-## Key Features
+### Key Features
 . Multi-model benchmarking (OpenAI, OpenRouter, Anthropic, Moonshot, etc.)
 . LLM-as-a-Judge evaluation pipeline
 . Multi-metric scoring (0–40 total score)
@@ -42,7 +42,8 @@ Add screenshots to the /screenshots folder and reference them below.
 Benchmark Configuration
 Results & Charts
 Leaderboard
-⚙️ Architecture
+
+### Architecture
 Frontend (React + Vite)
         |
         | POST /api/benchmark
@@ -52,7 +53,8 @@ Node.js Server (Express)
         | OpenAI-compatible API
         ↓
 LiteLLM / OpenRouter
-🔑 Environment Variables
+
+### Environment Variables
 Configure the following in Render → Environment or a local .env file.
 Required (Live Mode)
 LITELLM_BASE_URL=https://openrouter.ai/api/v1
