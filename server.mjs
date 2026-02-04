@@ -8,11 +8,6 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// ======================
-// Config
-// ======================
-const MOCK_MODE = String(process.env.MOCK_MODE || "").toLowerCase() === "true";
-
 function needEnv(name) {
   const v = process.env[name];
   if (!v) {
@@ -22,120 +17,75 @@ function needEnv(name) {
   return v;
 }
 
-// In MOCK_MODE we don't require provider envs
-const RAW_BASE = MOCK_MODE
-  ? ""
-  : needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
-const API_KEY = MOCK_MODE ? "" : (process.env.LITELLM_API_KEY || "").trim();
+const RAW_BASE = needEnv("LITELLM_BASE_URL").trim().replace(/\/$/, "");
+const API_KEY = (process.env.LITELLM_API_KEY || "").trim();
 
-// Normalize base to include /v1
+// OpenRouter is already /api/v1, so DO NOT append /v1 again if it's there
 const BASE_V1 =
-  MOCK_MODE ? "" : RAW_BASE.endsWith("/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
+  RAW_BASE.endsWith("/v1") ? RAW_BASE : RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/v1`;
 
 console.log("✅ Booting server.mjs...");
-console.log("PORT =", process.env.PORT || "10000");
-console.log("MOCK_MODE =", MOCK_MODE);
-console.log("LITELLM_BASE_URL =", RAW_BASE ? "SET" : "MISSING/NOT_USED");
-console.log("LITELLM_API_KEY =", API_KEY ? "SET" : "MISSING/NOT_USED");
+console.log("PORT =", process.env.PORT);
+console.log("LITELLM_BASE_URL =", RAW_BASE);
+console.log("BASE_V1 =", BASE_V1);
+console.log("LITELLM_API_KEY =", API_KEY ? "SET" : "MISSING");
 
-// ======================
-// Helpers
-// ======================
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
+/**
+ * ✅ UI LABEL -> REAL OPENROUTER MODEL ID
+ * You can override these in Render env if client wants different models.
+ */
+const MODEL_MAP = {
+  // UI label => OpenRouter model id
+  "GPT-4o Mini": process.env.MODEL_GPT4O_MINI || "openai/gpt-4o-mini",
+  "GPT-4o Mi": process.env.MODEL_GPT4O_MINI || "openai/gpt-4o-mini", // sometimes truncated in UI
+  "GLM 4.7 Flash": process.env.MODEL_GLM_47_FLASH || "google/gemini-1.5-flash",
+  "Kimi K2.5": process.env.MODEL_KIMI_K25 || "anthropic/claude-3.5-sonnet",
 
-function mockCreativeText(prompt, model) {
-  const seeds = [
-    "The sea kept its secrets until the lantern blinked twice.",
-    "He found the bottle wedged between rocks like a misplaced memory.",
-    "The message was written in his handwriting—older, calmer, afraid.",
-    "Some futures arrive quietly, disguised as coincidence.",
-  ];
-  return `MODEL: ${model}\n\n${seeds[randInt(0, seeds.length - 1)]}\n\nPrompt: ${prompt}\n\nAnd that was the moment everything changed.`;
-}
+  // judge dropdown label mapping (if UI shows recommended)
+  "GPT-4o Mini (Recommended)": process.env.MODEL_GPT4O_MINI || "openai/gpt-4o-mini",
+};
 
-function mockJudgeJson() {
-  const themeCoherence = randInt(6, 10);
-  const creativity = randInt(6, 10);
-  const fluency = randInt(6, 10);
-  const engagement = randInt(6, 10);
-  const totalScore = themeCoherence + creativity + fluency + engagement;
-  return { themeCoherence, creativity, fluency, engagement, totalScore };
+function normalizeModelId(input) {
+  const s = String(input || "").trim();
+  if (!s) return "";
+
+  // If already looks like openrouter id "provider/model", keep it
+  if (s.includes("/")) return s;
+
+  // Try exact match
+  if (MODEL_MAP[s]) return MODEL_MAP[s];
+
+  // Try loose match (handles UI truncation like "GPT-4o Mi...")
+  const lower = s.toLowerCase();
+  if (lower.includes("gpt") && lower.includes("mini")) return MODEL_MAP["GPT-4o Mini"];
+  if (lower.includes("glm")) return MODEL_MAP["GLM 4.7 Flash"];
+  if (lower.includes("kimi")) return MODEL_MAP["Kimi K2.5"];
+
+  return ""; // unknown -> will error clearly
 }
 
 async function fetchJson(url, { method = "GET", headers = {}, body } = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-
+  const res = await fetch(url, { method, headers, body });
+  const text = await res.text();
+  let json = {};
   try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body,
-      signal: controller.signal,
-    });
-
-    const text = await res.text();
-    let json;
-    try {
-      json = text ? JSON.parse(text) : {};
-    } catch {
-      json = { raw: text };
-    }
-
-    return { ok: res.ok, status: res.status, json, raw: text };
-  } finally {
-    clearTimeout(timeout);
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    json = { raw: text };
   }
-}
-
-function isOpenRouterBase(base) {
-  return typeof base === "string" && base.includes("openrouter.ai");
+  return { ok: res.ok, status: res.status, json, raw: text };
 }
 
 async function callChatCompletions(payload) {
-  // ======================
-  // MOCK MODE
-  // ======================
-  if (MOCK_MODE) {
-    const wantsJson =
-      payload?.response_format?.type === "json_object" ||
-      (payload?.messages || []).some(
-        (m) =>
-          typeof m?.content === "string" &&
-          m.content.toLowerCase().includes("return json")
-      );
-
-    if (wantsJson) {
-      return {
-        choices: [{ message: { content: JSON.stringify(mockJudgeJson()) } }],
-      };
-    }
-
-    const prompt =
-      payload?.messages?.find((m) => m.role === "user")?.content || "";
-    const model = payload?.model || "mock/model";
-    return {
-      choices: [{ message: { content: mockCreativeText(prompt, model) } }],
-    };
-  }
-
-  // ======================
-  // REAL MODE (LiteLLM/OpenRouter/OpenAI compatible)
-  // ======================
   const url = `${BASE_V1}/chat/completions`;
 
-  const headers = { "Content-Type": "application/json" };
-  if (API_KEY) headers.Authorization = `Bearer ${API_KEY}`;
-
-  // OpenRouter recommended headers (optional but good)
-  if (isOpenRouterBase(RAW_BASE)) {
-    if (process.env.OPENROUTER_SITE_URL)
-      headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL;
-    if (process.env.OPENROUTER_APP_NAME)
-      headers["X-Title"] = process.env.OPENROUTER_APP_NAME;
-  }
+  const headers = {
+    "Content-Type": "application/json",
+    ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
+    // These headers are optional but recommended by OpenRouter
+    ...(process.env.OPENROUTER_SITE_URL ? { "HTTP-Referer": process.env.OPENROUTER_SITE_URL } : {}),
+    ...(process.env.OPENROUTER_APP_NAME ? { "X-Title": process.env.OPENROUTER_APP_NAME } : {}),
+  };
 
   const out = await fetchJson(url, {
     method: "POST",
@@ -149,62 +99,74 @@ async function callChatCompletions(payload) {
       out.json?.message ||
       out.json?.detail ||
       out.raw ||
-      `Provider HTTP ${out.status}`;
-    throw new Error(String(msg));
+      `HTTP ${out.status}`;
+    throw new Error(`OpenRouter error: ${msg}`);
   }
 
   return out.json;
 }
 
-// ======================
-// Routes
-// ======================
-app.get("/health", (_req, res) => res.json({ ok: true, mock: MOCK_MODE }));
+/** Health */
+app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Debug provider connectivity (optional)
+/** Debug (open in browser) */
 app.get("/api/debug/provider", async (_req, res) => {
-  if (MOCK_MODE) {
-    return res.json({
-      mock: true,
-      message: "MOCK_MODE enabled. No external provider calls.",
-    });
-  }
+  const models = await fetchJson(`${BASE_V1}/models`, {
+    headers: API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {},
+  });
 
-  try {
-    // Many providers expose /v1/models (OpenRouter/OpenAI compatible)
-    const models = await fetchJson(`${BASE_V1}/models`, {
-      headers: API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {},
-    });
-
-    res.json({
-      mock: false,
-      base: RAW_BASE,
-      baseV1: BASE_V1,
-      models: { ok: models.ok, status: models.status, json: models.json },
-    });
-  } catch (e) {
-    res.status(500).json({ error: e?.message || "debug failed" });
-  }
+  res.json({
+    base: RAW_BASE,
+    baseV1: BASE_V1,
+    hasKey: Boolean(API_KEY),
+    modelMap: MODEL_MAP,
+    modelsOk: models.ok,
+    modelsStatus: models.status,
+    modelsSample:
+      Array.isArray(models.json?.data) ? models.json.data.slice(0, 20).map((m) => m.id) : models.json,
+  });
 });
 
-// Make GET not show "Not Found"
+/** Hint for GET */
 app.get("/api/benchmark", (_req, res) => {
   res.json({ ok: true, hint: "Use POST /api/benchmark with JSON body." });
 });
 
+/** Benchmark */
 app.post("/api/benchmark", async (req, res) => {
   try {
     const prompt = String(req.body?.prompt || "").trim();
-    const models = Array.isArray(req.body?.models) ? req.body.models : [];
-    const judgeModel = String(req.body?.judgeModel || "").trim();
+    const modelsIn = Array.isArray(req.body?.models) ? req.body.models : [];
+    const judgeIn = String(req.body?.judgeModel || "").trim();
 
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
-    if (!models.length) return res.status(400).json({ error: "models[] is required" });
-    if (!judgeModel) return res.status(400).json({ error: "judgeModel is required" });
+    if (!modelsIn.length) return res.status(400).json({ error: "models[] is required" });
+    if (!judgeIn) return res.status(400).json({ error: "judgeModel is required" });
+
+    const models = modelsIn.map(normalizeModelId).filter(Boolean);
+    const judgeModel = normalizeModelId(judgeIn);
+
+    if (!models.length) {
+      return res.status(400).json({
+        error: "No valid models after mapping. Fix MODEL_MAP or UI values.",
+        received: modelsIn,
+        mapped: models,
+        modelMap: MODEL_MAP,
+      });
+    }
+    if (!judgeModel) {
+      return res.status(400).json({
+        error: "Judge model not valid after mapping. Fix MODEL_MAP or UI value.",
+        received: judgeIn,
+        modelMap: MODEL_MAP,
+      });
+    }
 
     const results = [];
 
     for (const model of models) {
+      const t0 = Date.now();
+
       const writerResp = await callChatCompletions({
         model,
         temperature: 0.8,
@@ -258,14 +220,14 @@ ${output}
 
       results.push({
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        modelName: String(model).split("/").pop(),
-        provider: String(model).split("/")[0] || "unknown",
+        modelName: model.split("/").pop(),
+        provider: model.split("/")[0],
         themeCoherence,
         creativity,
         fluency,
         engagement,
         totalScore,
-        latency: 0,
+        latency: Date.now() - t0,
       });
     }
 
@@ -276,13 +238,11 @@ ${output}
   }
 });
 
-// ======================
-// Serve Vite dist
-// ======================
+/** Serve Vite dist */
 const distPath = path.join(__dirname, "dist");
 app.use(express.static(distPath));
 
-// SPA fallback
+/** SPA fallback */
 app.use((req, res, next) => {
   if (req.method !== "GET") return next();
   if (req.path.includes(".") || req.path.startsWith("/assets/")) return next();
